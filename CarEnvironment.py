@@ -177,17 +177,42 @@ class CarEnvironment():
             landmark_surface = pygame.Surface(self.landmark_size, pygame.SRCALPHA)
             pygame.draw.rect(landmark_surface, (0, 0, 255), (0, 0, *self.landmark_size))
             self.screen.blit(landmark_surface, landmark)
-        
+            
+        if hasattr(self, 'kf_data') and len(self.kf_data) > 0:
+            total_states = len(self.kf_data)
+            for i, est_data in enumerate(self.kf_data):
+                est_position = est_data[:2]
+                est_angle = est_data[4]
+                
+                # Calculate alpha value based on how old the state is
+                # Newer states are more opaque, older states are more transparent
+                alpha = max(30, int(255 * (i / total_states)))
+                
+                car_surface = pygame.Surface(self.car_size, pygame.SRCALPHA)
+                pygame.draw.rect(car_surface, (0, 255, 0), (0, 0, *self.car_size))
+                
+                # Set the alpha value
+                car_surface.set_alpha(alpha)
+                
+                rotated_surface = pygame.transform.rotate(car_surface, -np.degrees(est_angle))
+                
+                pos_x = est_position[0] - rotated_surface.get_width() // 2
+                pos_y = est_position[1] - rotated_surface.get_height() // 2
+                
+                self.screen.blit(rotated_surface, (pos_x, pos_y))
+
         # Update display
         pygame.display.flip()
     
-    def run(self):
+    def run(self, data=[[], []]):
         """Main game loop"""
         self.running = True
         
         # Start position printing thread
         self.update_thread = threading.Thread(target=self._update_observers)
         self.update_thread.start()
+        
+        self.kf_data = data
         
         try:
             while self.running:
@@ -308,7 +333,7 @@ class CarSim():
         return np.array(h).flatten()
         
     def run(self):
-        self.car_env.run()
+        self.car_env.run(self.x)
         
     def simulate(self):
         Qk = np.array(0.1*np.eye(5))
@@ -329,9 +354,10 @@ class CarSim():
             self.x.append(x_k1)
             self.P.append(P_k1)
             
-            if len(self.x) > 50 and len(self.P) > 50:
-                self.x = self.x[-50:]
-                self.P = self.P[-50:]
+            # Set x to only have the last 10 elements
+            # if len(self.x) > 50:
+            #     self.x = self.x[-50:]
+            #     self.P = self.P[-50:]
                 
             real_position = np.array(self.car_env.position)
             real_angle = self.car_env.angle
@@ -344,7 +370,8 @@ class CarSim():
 from DynamicPlot import DynamicPlot
         
 if __name__ == "__main__":
-    landmark_positions = [(100, 100), (200, 200), (300, 300)]
+    # Generate random landmark positions
+    landmark_positions = [(np.random.randint(0, 800), np.random.randint(0, 600)) for _ in range(5)]
     sim = CarSim(landmark_positions,
                     window_size=(800, 600),
                     initial_position=(400, 300),
