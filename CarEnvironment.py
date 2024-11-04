@@ -183,6 +183,9 @@ class CarEnvironment():
         if hasattr(self, 'kf_data') and len(self.kf_data) > 0:
             total_states = len(self.kf_data)
             for i, est_data in enumerate(self.kf_data):
+                if i != total_states - 1:
+                    continue
+
                 est_position = est_data[:2]
                 est_angle = est_data[4]
                 
@@ -198,8 +201,8 @@ class CarEnvironment():
                 
                 rotated_surface = pygame.transform.rotate(car_surface, -np.degrees(est_angle))
                 
-                pos_x = est_position[0] - rotated_surface.get_width() // 2
-                pos_y = est_position[1] - rotated_surface.get_height() // 2
+                pos_x = est_position[0] - rotated_surface.get_width() / 2
+                pos_y = est_position[1] - rotated_surface.get_height() / 2
                 
                 self.screen.blit(rotated_surface, (pos_x, pos_y))
 
@@ -354,9 +357,9 @@ class CarSim():
             self.P.append(P_k1)
             
             # Set x to only have the last 10 elements
-            # if len(self.x) > 50:
-            #     self.x = self.x[-50:]
-            #     self.P = self.P[-50:]
+            if len(self.x) > 50:
+                self.x.pop(0)
+                self.P.pop(0)
                 
             real_position = np.array(self.car_env.position)
             real_angle = self.car_env.angle
