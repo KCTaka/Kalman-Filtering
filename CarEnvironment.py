@@ -5,6 +5,8 @@ import threading
 import time
 from abc import ABC, abstractmethod
 
+from KalmanFilter import KalmanFilter
+
 def normalize_angle(angle: float):
     """Normalize angle to range [-pi, pi]"""
     return (angle + np.pi) % (2 * np.pi) - np.pi
@@ -247,8 +249,6 @@ class CarEnvironmentWithNoise(CarEnvironment):
         """Get landmark measurement with added noise"""
         measurements = super().get_landmark_measurements()
         return [(distance + np.random.normal(0, self.noise_std), angle + np.random.normal(0, self.noise_std)) for distance, angle in measurements]
-    
-from KalmanFilter import KalmanFilter
 
 class CarSim():
     def __init__(self, landmark_positions: list[tuple[int, int]],
@@ -257,7 +257,6 @@ class CarSim():
                  sensor_interval: float = 1.0,
                  noise_std: float = 0.1):
         
-        r, theta = self.catesian_to_polar(initial_position)
         self.x = [np.array([*initial_position, *(0, 0), 0])]
         self.P = [np.zeros_like(np.eye(self.x[-1].shape[0]))]
         
@@ -298,13 +297,13 @@ class CarSim():
         D_k1 = []
         for landmark_position in self.landmark_positions:
             rho = np.linalg.norm(landmark_position - x_k1k[:2])
-            rho_dot_x = -(landmark_position[0] - x_k1k[0])/rho
+            rho_dot_x = -(landmark_position[0] - x_k1k[0])/rho 
             rho_dot_y = -(landmark_position[1] - x_k1k[1])/rho
             
-            phi_dot_x = (landmark_position[1] - x_k1k[1])/(rho**2)
+            phi_dot_x = (landmark_position[1] - x_k1k[1])/(rho**2) 
             phi_dot_y = -(landmark_position[0] - x_k1k[0])/(rho**2)
             
-            D_k1 += [[rho_dot_x, rho_dot_y, 0, 0, 0], [phi_dot_x, phi_dot_y, 0, 0, -1]]
+            D_k1 += [[rho_dot_x, rho_dot_y, 0, 0, 0], [phi_dot_x, phi_dot_y, 0, 0, 0]]
         
         return np.array(D_k1)
     
@@ -366,8 +365,6 @@ class CarSim():
             print(f"Error: {error:.2f}")
             
             time.sleep(self.dt)
-            
-from DynamicPlot import DynamicPlot
         
 if __name__ == "__main__":
     # Generate random landmark positions
