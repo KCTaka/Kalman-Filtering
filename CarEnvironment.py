@@ -200,8 +200,8 @@ class CarEnvironment():
                 
                 rotated_surface = pygame.transform.rotate(car_surface, -np.degrees(est_angle))
                 
-                pos_x = est_position[0] - rotated_surface.get_width() // 2
-                pos_y = est_position[1] - rotated_surface.get_height() // 2
+                pos_x = est_position[0] - rotated_surface.get_width() / 2
+                pos_y = est_position[1] - rotated_surface.get_height() / 2
                 
                 self.screen.blit(rotated_surface, (pos_x, pos_y))
 
@@ -330,7 +330,7 @@ class CarSim():
         h = []
         for landmark_position in self.landmark_positions:
             rho = np.linalg.norm(landmark_position - x_k1k[:2])
-            phi = np.arctan2(landmark_position[1] - x_k1k[1], landmark_position[0] - x_k1k[0]) - x_k1k[4]
+            phi = normalize_angle(np.arctan2(landmark_position[1] - x_k1k[1], landmark_position[0] - x_k1k[0]) - x_k1k[4])
             h += [[rho, phi]]
         
         return np.array(h).flatten()
@@ -358,9 +358,9 @@ class CarSim():
             self.P.append(P_k1)
             
             # Set x to only have the last 10 elements
-            # if len(self.x) > 50:
-            #     self.x = self.x[-50:]
-            #     self.P = self.P[-50:]
+            if len(self.x) > 50:
+                self.x.pop(0)
+                self.P.pop(0)
                 
             real_position = np.array(self.car_env.position)
             real_angle = self.car_env.angle
@@ -372,7 +372,7 @@ class CarSim():
         
 if __name__ == "__main__":
     # Generate random landmark positions
-    landmark_positions = [(np.random.randint(0, 800), np.random.randint(0, 600)) for _ in range(5)]
+    landmark_positions = [(np.random.randint(0, 200), np.random.randint(0, 600)) for _ in range(5)]
     sim = CarSim(landmark_positions,
                     window_size=(800, 600),
                     initial_position=(400, 300),
