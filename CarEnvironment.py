@@ -183,6 +183,8 @@ class CarEnvironment():
         if hasattr(self, 'kf_data') and len(self.kf_data) > 0:
             total_states = len(self.kf_data)
             for i, est_data in enumerate(self.kf_data):
+                if i != total_states - 1:
+                    continue
                 est_position = est_data[:2]
                 est_angle = est_data[4]
                 
@@ -303,7 +305,7 @@ class CarSim():
             phi_dot_x = (landmark_position[1] - x_k1k[1])/(rho**2) 
             phi_dot_y = -(landmark_position[0] - x_k1k[0])/(rho**2)
             
-            D_k1 += [[rho_dot_x, rho_dot_y, 0, 0, 0], [phi_dot_x, phi_dot_y, 0, 0, 0]]
+            D_k1 += [[rho_dot_x, rho_dot_y, 0, 0, 0], [phi_dot_x, phi_dot_y, 0, 0, -1]]
         
         return np.array(D_k1)
     
@@ -320,7 +322,9 @@ class CarSim():
                         [self.dt*np.sin(x_k[4]), 0],
                         [0, self.dt]])
         
-        return A @ x_k + B @ u_k
+        x_k1 = A @ x_k + B @ u_k
+        x_k1[4] = normalize_angle(x_k1[4])
+        return x_k1
     
     def h(self, x_k1k: np.ndarray) -> np.ndarray:
         h = []
