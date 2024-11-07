@@ -4,13 +4,16 @@ import threading
 import time
 
 from Observers import Observer
+from Controller import Controller
 from helper import normalize_angle
 
 class CarEnvironment():
     def __init__(self,
+                 controller: Controller,
                  window_size: tuple[int, int] = (800, 600),
                  initial_position: tuple[float, float] = (400, 300),
-                 observers: list[Observer] = []):
+                 observers: list[Observer] = [],
+                 ):
         """
         Initialize the car simulation environment
         
@@ -37,10 +40,17 @@ class CarEnvironment():
         self.friction = 1          # Ns/m
         self.rotation_speed = 3.0  # radians per second
         
+        # Controller
+        if not controller:
+            raise ValueError("Controller must be provided")
+        self.controller = controller
+        self.controller.start()
+        
         # Observers
         self.observers = observers
         self.observers_time_tracker = {observer: time.time() for observer in self.observers}
         self.len_observers = len(self.observers)
+        self.min_update_interval = min([observer.update_interval for observer in self.observers])/10 if observers else 1# Try to update the observer as much as possible
         
         # Control flags
         self.running = False
@@ -55,6 +65,7 @@ class CarEnvironment():
         if self.len_observers != len(self.observers):
             self.observers_time_tracker = {observer: time.time() for observer in self.observers}
             self.len_observers = len(self.observers)
+            self.min_update_interval = min([observer.update_interval for observer in self.observers])/10
             
     def _observer_publisher(self):
         """Continuously update observers at specified intervals"""
@@ -79,39 +90,21 @@ class CarEnvironment():
                         measurements.append(getattr(self, attr))
                     
                     observer.update(*measurements)
+                    
+            time.sleep(self.min_update_interval)
+            
     
     def handle_input(self, dt: float):
         """Handle keyboard input and update car state"""
-        keys = pygame.key.get_pressed()
-        
-        self.angular_velocity_input = 0
-        self.linear_acceleration_input = 0
+        ang_vel = self.controller.angle_velocity
+        lin_acc = self.controller.acceleration
         
         # Rotation
-        if keys[pygame.K_LEFT]:
-            self.angle -= self.rotation_speed * dt
-            self.angle = normalize_angle(self.angle)
-            self.angular_velocity_input = -self.rotation_speed
-        if keys[pygame.K_RIGHT]:
-            self.angle += self.rotation_speed * dt
-            self.angle = normalize_angle(self.angle)
-            self.angular_velocity_input = self.rotation_speed
+        self.angle += ang_vel * dt
+        self.angle = normalize_angle(self.angle)
             
         # Forward/Backward movement
-        if keys[pygame.K_UP]:
-            self.acceleration = np.array([
-                np.cos(self.angle) * self.acceleration_rate,
-                np.sin(self.angle) * self.acceleration_rate
-            ])
-            self.linear_acceleration_input = self.acceleration_rate
-        elif keys[pygame.K_DOWN]:
-            self.acceleration = np.array([
-                -np.cos(self.angle) * self.acceleration_rate,
-                -np.sin(self.angle) * self.acceleration_rate
-            ])
-            self.linear_acceleration_input = -self.acceleration_rate
-        else:
-            self.acceleration = np.array([0.0, 0.0])
+        self.acceleration = np.array([lin_acc * np.cos(self.angle), lin_acc * np.sin(self.angle)])
     
     def update(self, dt: float):
         """Update car physics"""
@@ -187,5 +180,6 @@ class CarEnvironment():
             pygame.quit()
             
 if __name__ == "__main__":
-    env = CarEnvironment()
+    controller = Controller(0.0001)
+    env = CarEnvironment(controller=controller)
     env.run()

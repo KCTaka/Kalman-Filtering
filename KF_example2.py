@@ -2,6 +2,7 @@ import time
 import threading
 import numpy as np
 import pygame
+from scipy.linalg import block_diag
 
 from KalmanFilter import KalmanFilter
 from CarEnvironment import CarEnvironment
@@ -100,8 +101,11 @@ class CarSim():
                  sensor_interval: float = 1.0,
                  noise_std: float = 0.1):
         
-        self.x = [np.array([*initial_position, *(0, 0), 0],)]
+        self.x = [np.array([*initial_position, *(0, 0), 0])]
         self.P = [np.zeros_like(np.eye(self.x[-1].shape[0],))]
+        
+        self.epsilon = []
+        self.P_epsilon = []
         
         self.landmark_sensor = LandmarkSensor(sensor_interval)
         self.speed_sensor = SpeedSensor(sensor_interval)
@@ -118,12 +122,45 @@ class CarSim():
                                 )
         
         self.dt = sensor_interval
-        self.landmark_positions = self.car_env.landmark_positions # Must use measured, not true landmark positions
         
         # Controller to see inputs:
         self.controller = controller
+    
+    def gamma(self, x_k: np.ndarray, zeta_k: np.ndarray) -> np.ndarray:
+        epsilon_k = []
+        for i in range(0, len(zeta_k), 2):
+            rho, phi = zeta_k[i:i+2]
+            angle = normalize_angle(x_k[4] + phi)
+            epsilon_k.append(x_k[:2] + np.array([rho*np.cos(angle), rho*np.sin(angle)]))
         
-    def get_A_k(self, x_k1k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
+        return np.array(epsilon_k,).flatten()
+    
+    def eta(self, x_k: np.ndarray, epsilon_k: np.ndarray) -> np.ndarray:
+        zeta_k = []
+        for i in range(0, len(epsilon_k), 2):
+            landmark_position = epsilon_k[i:i+2]
+            rho = np.linalg.norm(landmark_position - x_k[:2])
+            phi = normalize_angle(np.arctan2(landmark_position[1] - x_k[1], landmark_position[0] - x_k[0]) - x_k[4])
+            zeta_k += [[rho, phi]]
+                
+        return np.array(zeta_k).flatten()
+        
+    def get_landmark_D_k(self, x_k: np.ndarray, epsilon_k: np.ndarray) -> np.ndarray:
+        D_k = np.zeros((epsilon_k.shape[0], epsilon_k.shape[0]))
+        for i in range(0, len(epsilon_k), 2):
+            rho = np.linalg.norm(epsilon_k[i:i+2] - x_k[:2])
+            
+            rho_dot_x = (epsilon_k[i] - x_k[0])/rho
+            rho_dot_y = (epsilon_k[i+1] - x_k[1])/rho
+            
+            phi_dot_x = -(epsilon_k[i+1] - x_k[1])/(rho**2)
+            phi_dot_y = (epsilon_k[i] - x_k[0])/(rho**2)
+            
+            D_k[i:i+2, i:i+2] = [[rho_dot_x, rho_dot_y], [phi_dot_x, phi_dot_y]]
+        
+        return np.array(D_k,)
+        
+    def get_robot_state_A_k(self, x_k1k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
         A_k = np.array([[1, 0, self.dt, 0, 0],
                         [0, 1, 0, self.dt, 0],
                         [0, 0, (1-self.car_env.friction), 0, -self.dt*np.sin(x_k1k[4])*u_k[0]],
@@ -131,7 +168,7 @@ class CarSim():
                         [0, 0, 0, 0, 1]],)
         return A_k
     
-    def get_B_k(self, x_k1k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
+    def get_robot_state_B_k(self, x_k1k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
         B_k = np.array([[0, 0],
                         [0, 0],
                         [self.dt*np.cos(x_k1k[4]), 0],
@@ -139,15 +176,16 @@ class CarSim():
                         [0, self.dt]],)
         return B_k
     
-    def get_D_k1(self, x_k1k: np.ndarray) -> np.ndarray: # Must correct to adjust to a calculated landpos
+    def get_robot_state_D_k1(self, x_k1k: np.ndarray, epsilon_k1k: np.ndarray) -> np.ndarray: # Must correct to adjust to a calculated landpos
         D_k1 = []
-        for landmark_position in self.landmark_positions:
-            rho = np.linalg.norm(landmark_position - x_k1k[:2])
-            rho_dot_x = -(landmark_position[0] - x_k1k[0])/rho 
-            rho_dot_y = -(landmark_position[1] - x_k1k[1])/rho
+        for i in range(0, len(epsilon_k1k), 2):
+            rho = np.linalg.norm(epsilon_k1k[i:i+2] - x_k1k[:2])
             
-            phi_dot_x = (landmark_position[1] - x_k1k[1])/(rho**2) 
-            phi_dot_y = -(landmark_position[0] - x_k1k[0])/(rho**2)
+            rho_dot_x = -(epsilon_k1k[i] - x_k1k[0])/rho
+            rho_dot_y = -(epsilon_k1k[i+1] - x_k1k[1])/rho
+            
+            phi_dot_x = (epsilon_k1k[i+1] - x_k1k[1])/(rho**2)
+            phi_dot_y = -(epsilon_k1k[i] - x_k1k[0])/(rho**2)
             
             D_k1 += [[rho_dot_x, rho_dot_y, 0, 0, 0], [phi_dot_x, phi_dot_y, 0, 0, -1]]
             
@@ -157,7 +195,7 @@ class CarSim():
         
         return np.array(D_k1,)
     
-    def f(self, x_k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
+    def robot_state_f(self, x_k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
         A = np.array([[1, 0, self.dt, 0, 0],
                 [0, 1, 0, self.dt, 0],
                 [0, 0, (1-self.car_env.friction*self.dt), 0, 0],
@@ -174,11 +212,11 @@ class CarSim():
         x_k1[4] = normalize_angle(x_k1[4])
         return x_k1
     
-    def h(self, x_k1k: np.ndarray) -> np.ndarray:
+    def robot_state_h(self, x_k1k: np.ndarray, epsilon_k1k: np.ndarray) -> np.ndarray:
         z_k1k = []
-        for landmark_position in self.landmark_positions:
-            rho = np.linalg.norm(landmark_position - x_k1k[:2])
-            phi = normalize_angle(np.arctan2(landmark_position[1] - x_k1k[1], landmark_position[0] - x_k1k[0]) - x_k1k[4])
+        for i in range(0, len(epsilon_k1k), 2):
+            rho = np.linalg.norm(epsilon_k1k[i:i+2] - x_k1k[:2])
+            phi = normalize_angle(np.arctan2(epsilon_k1k[i+1] - x_k1k[1], epsilon_k1k[i] - x_k1k[0]) - x_k1k[4])
             z_k1k += [[rho, phi]]
             
         z_k1k = np.array(z_k1k,).flatten()
@@ -186,41 +224,67 @@ class CarSim():
         z_k1k = np.concatenate([z_k1k, [speed]])
         
         return z_k1k
+    
+    def get_A_k(self, x_k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
+        A_k = self.get_robot_state_A_k(x_k[:5], u_k)
+        return block_diag(A_k, np.eye(x_k[5:].shape[0]))
+    
+    def get_B_k(self, x_k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
+        B_k = self.get_robot_state_B_k(x_k[:5], u_k)
+        # Concatenate zeroes vertically
+        return np.concatenate([B_k, np.zeros((x_k[5:].shape[0], u_k.shape[0]))], axis=0)
+    
+    def get_D_k1(self, x_k1k: np.ndarray) -> np.ndarray:
+        D_k1 = self.get_robot_state_D_k1(x_k1k[:5], x_k1k[5:])
+        D_k1_epsilon = self.get_landmark_D_k(x_k1k[:5], x_k1k[5:])
+        
+        return block_diag(D_k1, D_k1_epsilon)
+    
+    def f(self, x_k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
+        x_k1 = self.robot_state_f(x_k[:5], u_k)
+        epsilon_k1 = x_k[5:]
+        return np.concatenate([x_k1, epsilon_k1], axis=0)
+    
+    def h(self, x_k1k: np.ndarray) -> np.ndarray:
+        z_k1k = self.robot_state_h(x_k1k[:5], x_k1k[5:])
+        zeta_k1k = self.eta(x_k1k[:5], x_k1k[5:])
+        
+        return np.concatenate([z_k1k, zeta_k1k], axis=0)
         
     def simulate(self):
         noise_var = self.car_env.noise_std**2
-        Qk = np.array(noise_var*np.eye(5),)
-        Rk1 = np.array(noise_var*np.eye(len(self.landmark_positions)*2 + 1),)
-        Nk = np.array(0*np.eye(2),)
+        
+        zeta_k = np.array(self.car_env.landmark_measurements).flatten()
+        self.epsilon.append(self.gamma(self.x[-1], zeta_k))
+        self.P_epsilon.append(np.zeros_like(np.eye(self.epsilon[-1].shape[0])))
         
         while True:
-            x_k = self.x[-1]
-            P_k = self.P[-1]
+            x_k = np.concatenate([self.x[-1], self.epsilon[-1]], axis=0)
+            P_k = block_diag(self.P[-1], self.P_epsilon[-1])
             
             input_angular_vel = self.controller.angle_velocity
             input_linear_acc = self.controller.acceleration
 
-            landmark_measurements = np.array(self.car_env.landmark_measurements).flatten()
+            zeta_k1 = np.array(self.car_env.landmark_measurements).flatten()
+            z_k1 = np.concatenate([zeta_k1, [self.speed_sensor.speed], zeta_k1])
             u_k = np.array([input_linear_acc, input_angular_vel],)
-            z_k1 = np.concatenate([landmark_measurements, [self.speed_sensor.speed]])
+            
+            Qk = block_diag(noise_var*np.eye(5), np.zeros((self.epsilon[-1].shape[0], self.epsilon[-1].shape[0])))
+            Rk1 = noise_var*np.eye(z_k1.shape[0])
+            Nk = 0*np.eye(2)
             
             x_k1, P_k1 = self.kf.update(x_k, u_k, z_k1, P_k, Qk, Rk1, Nk)
             
-            self.x.append(x_k1)
-            self.P.append(P_k1)
+            self.x.append(x_k1[:5])
+            self.P.append(P_k1[:5, :5])
+            
+            self.epsilon.append(x_k1[5:])
+            self.P_epsilon.append(P_k1[5:, 5:])
             
             # Set x to only have the last 10 elements
             if len(self.x) > 10:
                 self.x.pop(0)
                 self.P.pop(0)
-                
-            real_position = np.array(self.car_env.position)
-            real_angle = self.car_env.angle
-            
-            positional_error = np.linalg.norm(real_position - x_k1[:2])
-            angular_error = np.abs(normalize_angle(real_angle - x_k1[4]))
-            print(f"Positional Error: {positional_error:.2f}\tAngular Error: {np.degrees(angular_error):.2f}")
-            #print(f'Predicted Position: {x_k1[:2]}\tCovariance: {P_k1[:2, :2]}\n')
             
             time.sleep(self.dt)
             

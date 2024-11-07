@@ -71,3 +71,38 @@ class LandmarkSensor(Observer):
     
     def update(self, *landmark_measurements: Any) -> None:
         self.landmark_measurements = landmark_measurements[0]
+        
+class SpeedSensor(Observer):
+    """Observer that prints car speed to console"""
+    def __init__(self, update_interval: float, attributes: List[str] = ["speed"]) -> None:
+        super().__init__()
+        self.speed = 0
+        self._update_interval = update_interval
+        self._attributes = attributes
+    
+    @property
+    def update_interval(self) -> float:
+        return self._update_interval
+    
+    @update_interval.setter
+    def update_interval(self, value: float) -> None:
+        if not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError("update_interval must be a positive number")
+        self._update_interval = float(value)
+    
+    @property
+    def attributes(self) -> List[str]:
+        return self._attributes
+    
+    @attributes.setter
+    def attributes(self, value: List[str]) -> None:
+        if not isinstance(value, list) or not all(isinstance(attr, str) for attr in value):
+            raise ValueError("attributes must be a list of strings")
+        self._attributes = value
+    
+    def print_speed(self) -> None:
+        print(f"Speed: {self.speed:.2f} pixels/second")
+    
+    def update(self, *speed: Any) -> None:
+        self.speed = speed[0]
+        # self.print_speed()

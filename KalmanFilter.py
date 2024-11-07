@@ -19,7 +19,7 @@ class KalmanFilter():
         
         self.W_k1 = None
         
-    def state_covariance_estimation(self, A_k, B_k, D_k1, P_k, Q_k, R_k1, N_k):
+    def state_covariance_estimation(self, A_k, B_k, D_k1, P_k, Q_k, R_k1, N_k):      
         P_k1k = A_k @ P_k @ A_k.T + B_k @ N_k @ B_k.T + Q_k
         S_k1 = D_k1 @ P_k1k @ D_k1.T + R_k1
         
