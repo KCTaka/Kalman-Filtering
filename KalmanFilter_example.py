@@ -9,6 +9,16 @@ from Observers import Observer, LandmarkSensor
 
 from helper import normalize_angle
 
+class KalmanFilter(KalmanFilter):
+    def state_estimation(self, x_k, u_k, z_k1):
+        x_k1k = self.f(x_k, u_k)
+        z_k1k = self.h(x_k1k)
+        s_k1 = z_k1 - z_k1k
+        # Normalize the angle residual
+        s_k1[1::2] = normalize_angle(s_k1[1::2])
+        x_k1 = x_k1k + self.W_k1 @ s_k1
+        return x_k1
+
 class CarEnvironmentWithNoise(CarEnvironment):
     def __init__(self, landmark_positions: list[tuple[int, int]],
                  window_size: tuple[int, int] = (800, 600),
@@ -55,6 +65,13 @@ class CarEnvironmentWithNoise(CarEnvironment):
                 
                 # Draw ghost car
                 self.draw_car(est_position, est_angle, (0, 255, 0), alpha)
+                
+                
+        # Calculate and display FPS
+        font = pygame.font.Font(None, 36)
+        fps = self.clock.get_fps()
+        fps_text = font.render(f"FPS: {fps:.2f}", True, pygame.Color('black'))
+        self.screen.blit(fps_text, (10, 10))
         
         # Create landmarks
         for landmark_pos in self.landmark_positions:
@@ -71,8 +88,8 @@ class CarSim():
                  sensor_interval: float = 1.0,
                  noise_std: float = 0.1):
         
-        self.x = [np.array([*initial_position, *(0, 0), 0])]
-        self.P = [np.zeros_like(np.eye(self.x[-1].shape[0]))]
+        self.x = [np.array([*initial_position, *(0, 0), 0],)]
+        self.P = [np.zeros_like(np.eye(self.x[-1].shape[0],))]
         
         self.landmark_sensor = LandmarkSensor(sensor_interval)
         
@@ -95,9 +112,9 @@ class CarSim():
     def get_A_k(self, x_k1k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
         A_k = np.array([[1, 0, self.dt, 0, 0],
                         [0, 1, 0, self.dt, 0],
-                        [0, 0, (1-self.car_env.friction), 0, 0],
-                        [0, 0, 0, (1-self.car_env.friction), 0],
-                        [0, 0, 0, 0, 1]])
+                        [0, 0, (1-self.car_env.friction), 0, -self.dt*np.sin(x_k1k[4])*u_k[0]],
+                        [0, 0, 0, (1-self.car_env.friction), self.dt*np.cos(x_k1k[4])*u_k[0]],
+                        [0, 0, 0, 0, 1]],)
         return A_k
     
     def get_B_k(self, x_k1k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
@@ -105,7 +122,7 @@ class CarSim():
                         [0, 0],
                         [self.dt*np.cos(x_k1k[4]), 0],
                         [self.dt*np.sin(x_k1k[4]), 0],
-                        [0, self.dt]])
+                        [0, self.dt]],)
         return B_k
     
     def get_D_k1(self, x_k1k: np.ndarray) -> np.ndarray: # Must correct to adjust to a calculated landpos
@@ -120,20 +137,20 @@ class CarSim():
             
             D_k1 += [[rho_dot_x, rho_dot_y, 0, 0, 0], [phi_dot_x, phi_dot_y, 0, 0, -1]]
         
-        return np.array(D_k1)
+        return np.array(D_k1,)
     
     def f(self, x_k: np.ndarray, u_k: np.ndarray) -> np.ndarray:
         A = np.array([[1, 0, self.dt, 0, 0],
                 [0, 1, 0, self.dt, 0],
                 [0, 0, (1-self.car_env.friction*self.dt), 0, 0],
                 [0, 0, 0, (1-self.car_env.friction*self.dt), 0],
-                [0, 0, 0, 0, 1]])
+                [0, 0, 0, 0, 1]],)
         
         B = np.array([[0, 0],
                         [0, 0],
                         [self.dt*np.cos(x_k[4]), 0],
                         [self.dt*np.sin(x_k[4]), 0],
-                        [0, self.dt]])
+                        [0, self.dt]],)
         
         x_k1 = A @ x_k + B @ u_k
         x_k1[4] = normalize_angle(x_k1[4])
@@ -146,13 +163,13 @@ class CarSim():
             phi = normalize_angle(np.arctan2(landmark_position[1] - x_k1k[1], landmark_position[0] - x_k1k[0]) - x_k1k[4])
             h += [[rho, phi]]
         
-        return np.array(h).flatten()
+        return np.array(h,).flatten()
         
     def simulate(self):
         noise_var = self.car_env.noise_std**2
-        Qk = np.array(noise_var*np.eye(5))
-        Rk1 = np.array(noise_var*np.eye(len(self.landmark_positions)*2))
-        Nk = np.array(noise_var*np.eye(2))
+        Qk = np.array(noise_var*np.eye(5),)
+        Rk1 = np.array(noise_var*np.eye(len(self.landmark_positions)*2),)
+        Nk = np.array(0*np.eye(2),)
         
         while True:
             x_k = self.x[-1]
@@ -160,8 +177,10 @@ class CarSim():
             
             input_angular_vel = self.car_env.angular_velocity_input
             input_linear_acc = self.car_env.linear_acceleration_input
-            u_k = np.array([input_linear_acc, input_angular_vel])
-            z_k1 = np.concatenate(self.landmark_sensor.landmark_measurements)
+
+            landmark_measurements = np.array(self.car_env.landmark_measurements)
+            u_k = np.array([input_linear_acc, input_angular_vel],)
+            z_k1 = np.concatenate(landmark_measurements,)
             
             x_k1, P_k1 = self.kf.update(x_k, u_k, z_k1, P_k, Qk, Rk1, Nk)
             
@@ -178,7 +197,7 @@ class CarSim():
             
             positional_error = np.linalg.norm(real_position - x_k1[:2])
             angular_error = np.abs(normalize_angle(real_angle - x_k1[4]))
-            print(f"Positional Error: {positional_error:.2f}\tAngular Error: {np.degrees(angular_error):.2f}")
+            # print(f"Positional Error: {positional_error:.2f}\tAngular Error: {np.degrees(angular_error):.2f}")
             
             time.sleep(self.dt)
             
@@ -194,11 +213,13 @@ class CarSim():
         
 if __name__ == "__main__":
     # Generate random landmark positions
+    #Set seed
+    np.random.seed(0)
     landmark_positions = [(np.random.randint(0, 200), np.random.randint(0, 600)) for _ in range(5)]
     sim = CarSim(landmark_positions,
                 window_size=(800, 600),
                 initial_position=(400, 300),
-                sensor_interval=0.1,
+                sensor_interval=0.01,
                 noise_std=1.5)
     
     sim.run()
